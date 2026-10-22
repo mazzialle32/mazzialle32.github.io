@@ -447,7 +447,7 @@ const cmpExp=(a,b)=>a.date<b.date?1:a.date>b.date?-1:(b.ts-a.ts);
    Stato + persistenza (LocalStorage, salvataggio immediato)
    ===================================================================== */
 let storageOK=true, corrupt=false;
-function defaultState(){return{v:1,contexts:[],expenses:[],activeCtx:null,settings:{theme:'auto',lastBackup:null,changes:0,installDismissed:false,lastCat:'cibo'}};}
+function defaultState(){return{v:1,contexts:[],expenses:[],imported:[],activeCtx:null,settings:{theme:'auto',lastBackup:null,changes:0,installDismissed:false,lastCat:'cibo'}};}
 
 function normalize(d){
   const out=defaultState();
@@ -470,6 +470,7 @@ function normalize(d){
     let id=okId(e.id)?e.id:uid();if(usedE.has(id))id=uid();usedE.add(id);
     out.expenses.push({id,ctx,amt,desc:str(e.desc,60),cat:CATS.some(c=>c.id===e.cat)?e.cat:'varie',date:validDate(e.date)?e.date:todayStr(),ts:Number(e.ts)||Date.now()});
   });
+  out.imported=Array.isArray(d.imported)?d.imported.filter(x=>typeof x==='string'&&x.length<300).slice(-1000):[];
   out.activeCtx=map.get(d.activeCtx)||(out.contexts[0]&&out.contexts[0].id)||null;
   const s=d.settings&&typeof d.settings==='object'?d.settings:{};
   out.settings.theme=['auto','dark','light'].indexOf(s.theme)>=0?s.theme:'auto';
@@ -699,6 +700,7 @@ function viewSettings(){
     '<button class="btn primary big" data-act="exp-json">Esporta backup (JSON)</button>'+
     '<div class="btnrow"><button class="btn" data-act="exp-csv">Esporta CSV</button><button class="btn" data-act="exp-copy">Copia come testo</button></div>'+
     '<button class="btn outline big" data-act="imp-open">Importa backup</button></section>';
+  h+='<section class="card"><h3>Spese rapide da Shortcuts</h3><p class="note">Una scorciatoia di iPhone annota ogni pagamento con carta e tu lo aggiungi qui con un tocco.</p><button class="btn primary big" data-act="qi-open">Importa spese rapide</button><div style="margin-top:8px"><button class="btn ghost" data-act="qi-help">Formato delle righe</button></div></section>';
   h+='<section class="card"><h3>Aspetto</h3><div class="seg" style="margin:0">'+[['auto','Automatico'],['dark','Scuro'],['light','Chiaro']].map(t=>'<button class="'+(st.theme===t[0]?'on':'')+'" data-act="theme" data-id="'+t[0]+'">'+t[1]+'</button>').join('')+'</div></section>';
   h+='<section class="card"><h3>Aggiungi alla schermata Home</h3>'+(isStandalone()?'<p class="note" style="margin:0">Stai già usando Tasca come app. 🎉</p>':guideHTML())+'</section>';
   h+='<section class="card"><h3>Dati</h3>'+
@@ -932,7 +934,7 @@ async function deleteCtx(){
    ===================================================================== */
 const stamp=()=>{const d=new Date();return d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'-'+pad(d.getHours())+pad(d.getMinutes());};
 function buildBackup(){
-  return JSON.stringify({app:'tasca',schema:1,exportedAt:new Date().toISOString(),amountUnit:'cents',data:{contexts:S.contexts,expenses:S.expenses,activeCtx:S.activeCtx,settings:{theme:S.settings.theme}}},null,2);
+  return JSON.stringify({app:'tasca',schema:1,exportedAt:new Date().toISOString(),amountUnit:'cents',data:{contexts:S.contexts,expenses:S.expenses,imported:S.imported||[],activeCtx:S.activeCtx,settings:{theme:S.settings.theme}}},null,2);
 }
 function csvCell(v){let s=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(s))s="'"+s;return /[";\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
 function buildCSV(){
@@ -1022,11 +1024,12 @@ function applyImport(mode){
   try{localStorage.setItem(KEY_PREV,snap);}catch(e){}
   const inc=pendingImport;let added=inc.expenses.length;
   mutate(s=>{
-    if(mode==='replace'){s.contexts=inc.contexts;s.expenses=inc.expenses;s.activeCtx=inc.activeCtx;}
+    if(mode==='replace'){s.contexts=inc.contexts;s.expenses=inc.expenses;s.imported=inc.imported||[];s.activeCtx=inc.activeCtx;}
     else{
       const cid=new Set(s.contexts.map(c=>c.id)),eid=new Set(s.expenses.map(e=>e.id));added=0;
       inc.contexts.forEach(c=>{if(!cid.has(c.id)){s.contexts.push(c);cid.add(c.id);}});
       inc.expenses.forEach(e=>{if(!eid.has(e.id)&&cid.has(e.ctx)){s.expenses.push(e);eid.add(e.id);added++;}});
+      s.imported=Array.from(new Set((s.imported||[]).concat(inc.imported||[]))).slice(-1000);
       if(!ctxById(s.activeCtx))s.activeCtx=s.contexts[0]?s.contexts[0].id:null;
     }
   });
@@ -1045,6 +1048,66 @@ async function wipeAll(){
   if(!await confirmBox({title:'Sei davvero sicuro?',msg:'Questa azione non si può annullare.',ok:'Elimina tutto',danger:true}))return;
   try{localStorage.removeItem(KEY);localStorage.removeItem(KEY_PREV);localStorage.removeItem(KEY_BAD);}catch(e){}
   S=defaultState();persist();applyTheme();ui.q='';ui.cat='all';ui.ringAnim=true;go('spese');toast('Tutti i dati sono stati eliminati.');
+}
+
+/* =====================================================================
+   Spese rapide da Shortcuts (righe «data;importo;descrizione;categoria;contesto»)
+   ===================================================================== */
+const nrm=x=>String(x==null?'':x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+function parseQuick(text){
+  const seen=new Set(S.imported||[]),res={ok:[],dup:0,bad:0,unmatched:0};
+  const active=ctxById(S.activeCtx)||S.contexts[0];
+  String(text).split(/\r?\n/).forEach(raw=>{
+    const line=raw.replace(/\s+/g,' ').trim();
+    if(!line||line.indexOf(';')<0)return;
+    const f=line.split(';').map(x=>x.trim());
+    const m=/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{1,2}):(\d{2}))?$/.exec(f[0]);
+    const amt=parseMoney((f[1]||'').replace(/[^\d.,]/g,''));
+    if(!m||!validDate(m[1])||amt==null||isNaN(amt)||amt<=0){res.bad++;return;}
+    if(seen.has(line)){res.dup++;return;}
+    seen.add(line);
+    const cn=nrm(f[3]),cat=CATS.find(c=>c.id===cn||nrm(c.name)===cn);
+    const xn=nrm(f[4]);let ctx=null;
+    if(xn)ctx=S.contexts.find(c=>nrm(c.name)===xn)||S.contexts.find(c=>{const nm=nrm(c.name);return xn.length>=3&&(nm.indexOf(xn)>=0||(nm.length>=3&&xn.indexOf(nm)>=0));});
+    if(!ctx){res.unmatched++;ctx=active;}
+    if(!ctx){res.bad++;return;}
+    const ts=m[2]?new Date(+m[1].slice(0,4),+m[1].slice(5,7)-1,+m[1].slice(8,10),+m[2],+m[3]).getTime():Date.now();
+    res.ok.push({key:line,rec:{id:uid(),ctx:ctx.id,amt:amt,desc:(f[2]||'').slice(0,60),cat:cat?cat.id:'varie',date:m[1],ts:ts}});
+  });
+  res.target=active?active.name:'';
+  return res;
+}
+let pendingQuick=null;
+function qiMsg(h){const r=$('#qires');if(r)r.innerHTML=h;}
+function openQuick(){
+  pendingQuick=null;
+  openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"><button class="link" data-act="sheet-close">Annulla</button></span><h2>Spese rapide</h2><span class="r"></span></div>'+
+    '<div class="sh-body"><p class="note">Apri la nota dove la scorciatoia salva i pagamenti, seleziona tutto e copia. Poi tocca qui sotto.</p>'+
+    '<button class="btn primary big" data-act="qi-clip">Incolla dagli appunti</button>'+
+    '<label class="lab" for="qitext">Oppure incolla a mano</label><textarea id="qitext" class="field" rows="4" placeholder="2026-10-22 13:45;12,50;Pizzeria;cibo;Viaggio a Praga" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>'+
+    '<div style="margin-top:10px"><button class="btn big" data-act="qi-read">Leggi il testo</button></div><div id="qires" style="margin-top:14px"></div></div>','sheet-qi');
+}
+function previewQuick(text){
+  if(!S.contexts.length){qiMsg('<div class="tip">Crea prima almeno un contesto.</div>');return;}
+  const r=parseQuick(text);pendingQuick=r;
+  const extra=(r.dup?r.dup+(r.dup===1?' già importata (ignorata). ':' già importate (ignorate). '):'')+(r.bad?r.bad+(r.bad===1?' riga non valida (ignorata). ':' righe non valide (ignorate). '):'');
+  if(!r.ok.length){pendingQuick=null;qiMsg('<div class="tip">Nessuna spesa nuova da importare. '+esc(extra)+'</div>');return;}
+  const n=r.ok.length,tot=r.ok.reduce((t,x)=>t+x.rec.amt,0);
+  qiMsg('<div class="card" style="background:var(--surface2);margin:0"><b>'+n+(n===1?' spesa pronta':' spese pronte')+' · '+money(tot)+'</b><p class="note" style="margin:4px 0 12px">'+esc(extra)+(r.unmatched?r.unmatched+(r.unmatched===1?' ha':' hanno')+' un contesto non riconosciuto e finirà in «'+esc(r.target)+'». ':'')+'</p><button class="btn primary big" data-act="qi-apply">Importa '+n+(n===1?' spesa':' spese')+'</button></div>');
+}
+function applyQuick(){
+  if(!pendingQuick||!pendingQuick.ok.length)return;
+  const snap=JSON.stringify(S),items=pendingQuick.ok;
+  mutate(s=>{items.forEach(x=>{s.expenses.push(x.rec);});s.imported=(s.imported||[]).concat(items.map(x=>x.key)).slice(-1000);});
+  pendingQuick=null;closeSheet();ui.ringAnim=true;render();
+  toast('Importate '+items.length+(items.length===1?' spesa.':' spese.'),()=>restoreSnapshot(snap));
+}
+function openQuickHelp(){
+  openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"></span><h2>Formato delle righe</h2><span class="r"><button class="link" data-act="sheet-close">Fine</button></span></div>'+
+    '<div class="sh-body"><p class="note">Ogni pagamento è una riga con cinque campi separati da punto e virgola:</p>'+
+    '<div class="tip" style="border-left-color:var(--accent);font-family:ui-monospace,Menlo,monospace;font-size:13px;user-select:text;-webkit-user-select:text">data ora;importo;descrizione;categoria;contesto</div>'+
+    '<p class="note" style="margin-top:12px">Esempio:</p><div class="tip" style="border-left-color:var(--accent);font-family:ui-monospace,Menlo,monospace;font-size:13px;user-select:text;-webkit-user-select:text">2026-10-22 13:45;12,50;Pizzeria da Mario;cibo;Viaggio a Praga</div>'+
+    '<p class="note" style="margin-top:12px"><b>Categorie:</b> '+CATS.map(c=>c.name).join(', ')+'. Il nome del contesto deve essere uguale a quello dell’app (maiuscole ed emoji non contano). Se non lo trova, la spesa va nel contesto attivo. Le righe già importate vengono ignorate, quindi non rischi doppioni.</p></div>','sheet-qih');
 }
 
 /* =====================================================================
@@ -1107,6 +1170,11 @@ const A={
   howto:()=>openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"></span><h2>Aggiungi alla Home</h2><span class="r"><button class="link" data-act="sheet-close">Fine</button></span></div><div class="sh-body">'+guideHTML()+'</div>','sheet-how'),
   hideinst:()=>mutate(s=>{s.settings.installDismissed=true;},{count:false}),
   hidebk:()=>{ui.hideBackup=true;render();},
+  'qi-open':()=>openQuick(),
+  'qi-help':()=>openQuickHelp(),
+  'qi-clip':async()=>{let t='';try{t=await navigator.clipboard.readText();}catch(e){}if(!t||!t.trim()){qiMsg('<div class="tip">Non riesco a leggere gli appunti. Incolla il testo nella casella e tocca «Leggi il testo».</div>');return;}$('#qitext').value=t;previewQuick(t);},
+  'qi-read':()=>{const t=$('#qitext').value;if(!t.trim()){qiMsg('<div class="tip">Incolla prima le righe copiate dalla nota.</div>');return;}previewQuick(t);},
+  'qi-apply':()=>applyQuick(),
   sample:()=>loadSample()
 };
 document.addEventListener('click',e=>{
