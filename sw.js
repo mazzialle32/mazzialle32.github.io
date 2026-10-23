@@ -1,5 +1,5 @@
 /* Tasca: service worker per l'uso offline. Se aggiorni i file, cambia il numero di versione qui sotto. */
-const CACHE = 'tasca-v2';
+const CACHE = 'tasca-v3';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

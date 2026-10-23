@@ -447,7 +447,7 @@ const cmpExp=(a,b)=>a.date<b.date?1:a.date>b.date?-1:(b.ts-a.ts);
    Stato + persistenza (LocalStorage, salvataggio immediato)
    ===================================================================== */
 let storageOK=true, corrupt=false;
-function defaultState(){return{v:1,contexts:[],expenses:[],imported:[],activeCtx:null,settings:{theme:'auto',lastBackup:null,changes:0,installDismissed:false,lastCat:'cibo'}};}
+function defaultState(){return{v:1,contexts:[],expenses:[],imported:[],activeCtx:null,settings:{theme:'auto',lastBackup:null,changes:0,installDismissed:false,lastCat:'cibo',sync:{url:'',key:''},lastSync:null}};}
 
 function normalize(d){
   const out=defaultState();
@@ -478,6 +478,8 @@ function normalize(d){
   out.settings.changes=Math.max(0,Number(s.changes)||0);
   out.settings.installDismissed=!!s.installDismissed;
   out.settings.lastCat=CATS.some(c=>c.id===s.lastCat)?s.lastCat:'cibo';
+  out.settings.sync={url:(s.sync&&typeof s.sync.url==='string'&&/^(https:\/\/|http:\/\/localhost)/.test(s.sync.url))?s.sync.url.slice(0,300):'',key:(s.sync&&typeof s.sync.key==='string')?s.sync.key.slice(0,100):''};
+  out.settings.lastSync=Number(s.lastSync)||null;
   return out;
 }
 function load(){
@@ -700,6 +702,8 @@ function viewSettings(){
     '<button class="btn primary big" data-act="exp-json">Esporta backup (JSON)</button>'+
     '<div class="btnrow"><button class="btn" data-act="exp-csv">Esporta CSV</button><button class="btn" data-act="exp-copy">Copia come testo</button></div>'+
     '<button class="btn outline big" data-act="imp-open">Importa backup</button></section>';
+  const sy=!!(st.sync&&st.sync.url&&st.sync.key);
+  h+='<section class="card"><h3>Sincronizzazione Apple Pay</h3><p class="note">'+(sy?'Collegata'+(st.lastSync?' · ultima sincronizzazione '+ago(st.lastSync)+'.':'.')+' Le spese arrivano da sole ogni volta che apri Tasca.':'Non collegata. Serve per ricevere le spese della scorciatoia senza aprire nessuna app.')+'</p>'+(sy?'<button class="btn primary big" data-act="sy-now">Sincronizza ora</button><div style="height:8px"></div>':'')+'<button class="btn '+(sy?'outline':'primary')+' big" data-act="sy-open">'+(sy?'Modifica collegamento':'Collega')+'</button></section>';
   h+='<section class="card"><h3>Spese rapide da Shortcuts</h3><p class="note">Una scorciatoia di iPhone annota ogni pagamento con carta e tu lo aggiungi qui con un tocco.</p><button class="btn primary big" data-act="qi-open">Importa spese rapide</button><div style="margin-top:8px"><button class="btn ghost" data-act="qi-help">Formato delle righe</button></div></section>';
   h+='<section class="card"><h3>Aspetto</h3><div class="seg" style="margin:0">'+[['auto','Automatico'],['dark','Scuro'],['light','Chiaro']].map(t=>'<button class="'+(st.theme===t[0]?'on':'')+'" data-act="theme" data-id="'+t[0]+'">'+t[1]+'</button>').join('')+'</div></section>';
   h+='<section class="card"><h3>Aggiungi alla schermata Home</h3>'+(isStandalone()?'<p class="note" style="margin:0">Stai già usando Tasca come app. 🎉</p>':guideHTML())+'</section>';
@@ -1054,8 +1058,8 @@ async function wipeAll(){
    Spese rapide da Shortcuts (righe «data;importo;descrizione;categoria;contesto»)
    ===================================================================== */
 const nrm=x=>String(x==null?'':x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
-function parseQuick(text){
-  const seen=new Set(S.imported||[]),res={ok:[],dup:0,bad:0,unmatched:0};
+function parseQuick(text,opt){
+  const seen=new Set(S.imported||[]),res={ok:[],dup:0,bad:0,unmatched:0,fresh:{}};
   const active=ctxById(S.activeCtx)||S.contexts[0];
   String(text).split(/\r?\n/).forEach(raw=>{
     const line=raw.replace(/\s+/g,' ').trim();
@@ -1069,6 +1073,7 @@ function parseQuick(text){
     const cn=nrm(f[3]),cat=CATS.find(c=>c.id===cn||nrm(c.name)===cn);
     const xn=nrm(f[4]);let ctx=null;
     if(xn)ctx=S.contexts.find(c=>nrm(c.name)===xn)||S.contexts.find(c=>{const nm=nrm(c.name);return xn.length>=3&&(nm.indexOf(xn)>=0||(nm.length>=3&&xn.indexOf(nm)>=0));});
+    if(!ctx&&opt&&opt.create&&xn){ctx=res.fresh[xn]||(res.fresh[xn]={id:uid(),name:f[4].slice(0,40),emoji:'📅',budget:null,created:Date.now()});}
     if(!ctx){res.unmatched++;ctx=active;}
     if(!ctx){res.bad++;return;}
     const ts=m[2]?new Date(+m[1].slice(0,4),+m[1].slice(5,7)-1,+m[1].slice(8,10),+m[2],+m[3]).getTime():Date.now();
@@ -1108,6 +1113,54 @@ function openQuickHelp(){
     '<div class="tip" style="border-left-color:var(--accent);font-family:ui-monospace,Menlo,monospace;font-size:13px;user-select:text;-webkit-user-select:text">data ora;importo;descrizione;categoria;contesto</div>'+
     '<p class="note" style="margin-top:12px">Esempio:</p><div class="tip" style="border-left-color:var(--accent);font-family:ui-monospace,Menlo,monospace;font-size:13px;user-select:text;-webkit-user-select:text">2026-10-22 13:45;12,50;Pizzeria da Mario;cibo;Viaggio a Praga</div>'+
     '<p class="note" style="margin-top:12px"><b>Categorie:</b> '+CATS.map(c=>c.name).join(', ')+'. Il nome del contesto deve essere uguale a quello dell’app (maiuscole ed emoji non contano). Se non lo trova, la spesa va nel contesto attivo. Le righe già importate vengono ignorate, quindi non rischi doppioni.</p></div>','sheet-qih');
+}
+
+/* =====================================================================
+   Sincronizzazione automatica con l'app web Google (coda di spese Apple Pay)
+   ===================================================================== */
+let syncing=false,lastTry=0;
+function openSync(){
+  const c=S.settings.sync||{url:'',key:''};
+  openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"><button class="link" data-act="sheet-close">Annulla</button></span><h2>Sincronizzazione</h2><span class="r"></span></div>'+
+    '<div class="sh-body"><p class="note">Incolla l’indirizzo dell’app web creata su Google e la tua chiave segreta. Le spese pagate con Apple Pay arriveranno qui da sole.</p>'+
+    '<label class="lab" for="sy-url">Indirizzo (finisce con /exec)</label><input id="sy-url" class="field" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" value="'+esc(c.url)+'">'+
+    '<label class="lab" for="sy-key">Chiave segreta</label><input id="sy-key" class="field" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" value="'+esc(c.key)+'">'+
+    (c.url?'<div style="margin-top:14px"><button class="btn danger big" data-act="sy-off">Scollega</button></div>':'')+'</div>'+
+    '<div class="sh-foot"><button class="btn primary big" data-act="sy-save">Salva e sincronizza</button></div>','sheet-sy');
+}
+async function syncNow(silent){
+  const c=S.settings.sync;
+  if(!c||!c.url||!c.key||syncing)return;
+  syncing=true;
+  try{
+    const u=c.url+(c.url.indexOf('?')>=0?'&':'?')+'chiave='+encodeURIComponent(c.key)+'&t='+Date.now();
+    const r=await fetch(u,{cache:'no-store'});
+    const j=await r.json();
+    if(!j||j.errore||!Array.isArray(j.righe)){if(!silent)toast('Sincronizzazione non riuscita: controlla indirizzo e chiave.');return;}
+    const res=parseQuick(j.righe.join('\n'),{create:true});
+    if(!res.ok.length){
+      S.settings.lastSync=Date.now();persist();
+      if(ui.tab==='set')render();
+      if(!silent)toast('Tutto aggiornato: nessuna spesa nuova.');
+      return;
+    }
+    ui.ringAnim=true;
+    mutate(s=>{
+      Object.keys(res.fresh).forEach(k=>s.contexts.push(res.fresh[k]));
+      res.ok.forEach(x=>s.expenses.push(x.rec));
+      s.imported=(s.imported||[]).concat(res.ok.map(x=>x.key)).slice(-1000);
+      s.settings.lastSync=Date.now();
+    });
+    const n=res.ok.length;
+    toast(n+(n===1?' nuova spesa da Apple Pay.':' nuove spese da Apple Pay.'));
+  }catch(e){
+    if(!silent)toast('Non riesco a collegarmi. Controlla la connessione e l’indirizzo.');
+  }finally{syncing=false;}
+}
+function autoSync(){
+  const c=S.settings.sync;
+  if(!c||!c.url||!c.key||(navigator.onLine===false))return;
+  const now=Date.now();if(now-lastTry<15000)return;lastTry=now;syncNow(true);
 }
 
 /* =====================================================================
@@ -1170,6 +1223,14 @@ const A={
   howto:()=>openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"></span><h2>Aggiungi alla Home</h2><span class="r"><button class="link" data-act="sheet-close">Fine</button></span></div><div class="sh-body">'+guideHTML()+'</div>','sheet-how'),
   hideinst:()=>mutate(s=>{s.settings.installDismissed=true;},{count:false}),
   hidebk:()=>{ui.hideBackup=true;render();},
+  'sy-open':()=>openSync(),
+  'sy-now':()=>syncNow(false),
+  'sy-save':()=>{
+    const u=($('#sy-url').value||'').trim(),k=($('#sy-key').value||'').trim();
+    if(!/^(https:\/\/|http:\/\/localhost)/.test(u)||!k){toast('Controlla indirizzo e chiave: l’indirizzo deve iniziare con https://');return;}
+    mutate(s=>{s.settings.sync={url:u,key:k};},{count:false});closeSheet();syncNow(false);
+  },
+  'sy-off':async()=>{if(await confirmBox({title:'Scollegare la sincronizzazione?',msg:'Le spese già importate restano in Tasca.',ok:'Scollega',danger:true})){mutate(s=>{s.settings.sync={url:'',key:''};},{count:false});closeSheet();toast('Sincronizzazione scollegata.');}},
   'qi-open':()=>openQuick(),
   'qi-help':()=>openQuickHelp(),
   'qi-clip':async()=>{let t='';try{t=await navigator.clipboard.readText();}catch(e){}if(!t||!t.trim()){qiMsg('<div class="tip">Non riesco a leggere gli appunti. Incolla il testo nella casella e tocca «Leggi il testo».</div>');return;}$('#qitext').value=t;previewQuick(t);},
@@ -1237,8 +1298,9 @@ screenEl.addEventListener('touchend',swEnd);screenEl.addEventListener('touchcanc
   Object.keys(m).forEach(id=>{const n=document.getElementById(id);if(n)n.innerHTML=m[id];});
 })();
 applyTheme();
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!sheetState)render();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(!sheetState)render();autoSync();}});
 render();
+autoSync();
 if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){window.addEventListener('load',()=>{navigator.serviceWorker.register('./sw.js').catch(()=>{});});}
 if(corrupt)setTimeout(()=>toast('I dati salvati erano danneggiati. Ne ho conservato una copia di sicurezza.'),400);
 if(!storageOK)setTimeout(()=>toast('Memoria del browser non disponibile: i dati non verranno salvati.'),400);
