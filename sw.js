@@ -1,6 +1,6 @@
 /* Tasca: service worker. Online prende sempre la versione più recente; offline usa la copia salvata.
    Se aggiorni i file, cambia il numero di versione qui sotto. */
-const CACHE = 'tasca-v4';
+const CACHE = 'tasca-v5';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
