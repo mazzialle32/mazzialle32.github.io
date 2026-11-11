@@ -366,6 +366,12 @@ textarea.field{height:auto;padding:12px 14px;resize:none;line-height:1.35}
 
 .rvcard{display:flex;align-items:center;gap:12px;background:var(--surface2);border-radius:16px;padding:12px;margin-bottom:4px}
 .rvcard .rt{flex:1;min-width:0;display:flex;flex-direction:column}
+.rvnav{display:flex;align-items:center;justify-content:center;gap:2px}
+.rvnav .link{min-width:34px;font-size:26px;line-height:1;text-align:center;padding:0}
+.rvnav h2{min-width:58px;text-align:center}
+.rvchip{flex:none;height:34px;padding:0 12px;border-radius:17px;background:var(--surface2);font-size:13.5px;font-weight:600;white-space:nowrap;color:var(--muted)}
+.rvchip.on{background:var(--accent);color:var(--accent-ink)}
+.rvchip.ok{opacity:.65}
 @media (prefers-reduced-motion:reduce){
   *{transition-duration:.01ms!important;animation-duration:.01ms!important}
 }
@@ -832,6 +838,25 @@ function inPeriod(p){
   const y=String(new Date().getFullYear()),m=todayStr().slice(0,7);
   return p==='year'?(e=>e.date.slice(0,4)===y):p==='month'?(e=>e.date.slice(0,7)===m):(()=>true);
 }
+function compareCard(){
+  const o=outs(S.expenses);if(!o.length)return '';
+  const t=todayStr(),cm=t.slice(0,7),dn=+t.slice(8,10);
+  const pdate=new Date(+t.slice(0,4),+t.slice(5,7)-2,1),pm=todayStr(pdate).slice(0,7);
+  const cur=sum(o.filter(e=>e.date.slice(0,7)===cm&&e.date<=t));
+  const prevSame=sum(o.filter(e=>e.date.slice(0,7)===pm&&+e.date.slice(8,10)<=dn));
+  const prevTot=sum(o.filter(e=>e.date.slice(0,7)===pm));
+  const by={};o.forEach(e=>{const m=e.date.slice(0,7);if(m<cm)by[m]=(by[m]||0)+e.amt;});
+  const ms=Object.keys(by),avg=ms.length?Math.round(ms.reduce((a,m)=>a+by[m],0)/ms.length):0;
+  if(!prevTot&&!avg)return '';
+  const mn=d=>cap(d.toLocaleDateString('it-IT',{month:'long'}));
+  const pct=(a,b)=>b?Math.round((a-b)/b*100):null;
+  const badge=p=>p==null?'':'<b class="'+(p>0?'warn':'good')+'">'+(p>0?'+':'')+p+'%</b>';
+  let h='<section class="card"><h3>Questo mese a confronto</h3><div class="srow"><span>Finora in '+mn(new Date())+'</span><span class="num"><b style="color:var(--text)">'+money(cur)+'</b></span></div>';
+  if(prevTot)h+='<div class="srow"><span>Stesso periodo di '+mn(pdate)+'</span><span class="num">'+money(prevSame)+' '+badge(pct(cur,prevSame))+'</span></div><div class="srow"><span>'+mn(pdate)+' intero</span><span class="num">'+money(prevTot)+'</span></div>';
+  if(avg)h+='<div class="srow"><span>Media mensile ('+ms.length+(ms.length===1?' mese':' mesi')+')</span><span class="num">'+money(avg)+(cur?' '+badge(pct(cur,avg)):'')+'</span></div>';
+  return h+'</section>';
+}
+
 function viewGlobale(){
   const exps=S.expenses.filter(inPeriod(ui.period)),so=spentSum(exps),si=inSum(exps);
   let h='<header class="hdr"><h1 class="rounded">Totale globale</h1></header>';
@@ -853,7 +878,7 @@ function viewGlobale(){
       h+='<div class="stats" style="margin-top:10px"><div class="stat"><span>Speso nei contesti con budget</span><b>'+money(ts)+'</b></div><div class="stat"><span>Budget complessivo</span><b>'+money(tb)+'</b></div></div>';
     }
   }
-  h+='</section>';
+  h+='</section>'+compareCard();
   if(!exps.length)return h+emptyHTML('🌍','Niente in questo periodo','Cambia periodo o aggiungi una spesa.');
   const mx=Math.max.apply(null,per.map(x=>x.sp).concat([1]));
   h+='<section class="card"><h3>Per contesto</h3>'+per.map(x=>{
@@ -894,7 +919,7 @@ function viewSettings(){
     '<div class="srow"><span>Contenuto</span><span>'+S.contexts.length+' contesti · '+S.expenses.length+' spese</span></div>'+
     (hasPrev()?'<div class="srow"><button data-act="restore-prev">Ripristina i dati precedenti all’ultima importazione</button></div>':'')+
     '<div class="srow"><button class="dng" data-act="wipe">Elimina tutti i dati</button></div></section>';
-  return h+'<p class="ver">Tasca 1.6 · funziona offline</p>';
+  return h+'<p class="ver">Tasca 1.7 · funziona offline</p>';
 }
 
 const VIEWS={spese:viewSpese,ctx:viewContesti,glob:viewGlobale,set:viewSettings};
@@ -927,6 +952,15 @@ function toast(msg,undo){
   t.innerHTML='<span>'+esc(msg)+'</span>'+(undo?'<button>Annulla</button>':'');
   if(undo)t.querySelector('button').addEventListener('click',()=>{t.remove();clearTimeout(toastT);undo();});
   $('#layer').append(t);toastEl=t;
+  let y0=null,dy=0;
+  t.addEventListener('touchstart',e=>{y0=e.touches[0].clientY;dy=0;t.style.transition='none';},{passive:true});
+  t.addEventListener('touchmove',e=>{if(y0===null)return;dy=Math.max(0,e.touches[0].clientY-y0);t.style.transform='translateY('+dy+'px)';},{passive:true});
+  const endT=()=>{
+    if(y0===null)return;y0=null;t.style.transition='';
+    if(dy>24){clearTimeout(toastT);t.style.opacity='0';t.style.transform='translateY(90px)';setTimeout(()=>t.remove(),260);}
+    else t.style.transform='';
+  };
+  t.addEventListener('touchend',endT);t.addEventListener('touchcancel',endT);
   requestAnimationFrame(()=>t.classList.add('show'));
   toastT=setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),300);},undo?7000:3500);
 }
@@ -1331,32 +1365,38 @@ function openDefCtx(){
     S.contexts.map(c=>'<button class="srow" style="width:100%;text-align:left;font-size:16px" data-act="defctx-set" data-id="'+c.id+'"><span>'+esc(c.emoji)+' '+esc(c.name)+'</span><span>'+(c.id===cur?'✓':'')+'</span></button>').join('')+
     '<button class="srow" style="width:100%;text-align:left;font-size:16px" data-act="defctx-set" data-id=""><span>Segui il contesto attivo</span><span>'+(!cur?'✓':'')+'</span></button></div>','sheet-dc');
 }
-/* Revisione veloce delle spese arrivate da sole */
+/* Revisione delle spese arrivate da sole: si scorre tra tutte, si modifica, si elimina, si conferma */
 let rv=null;
+function rvLive(){return rv.ids.filter(id=>S.expenses.some(e=>e.id===id));}
+function rvCur(){if(!rv)return null;const ids=rvLive();return S.expenses.find(e=>e.id===ids[rv.i])||null;}
+function rvDraft(e){if(!rv.drafts[e.id])rv.drafts[e.id]={ctx:e.ctx,cat:e.cat,desc:e.desc||''};return rv.drafts[e.id];}
 function openReview(){
   const ids=S.expenses.filter(e=>e.auto).sort(cmpExp).map(e=>e.id);
   if(!ids.length){toast('Non c’è niente da rivedere.');return;}
-  rv={ids:ids,i:-1,ctx:null,cat:null};
-  openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"><button class="link" data-act="sheet-close">Chiudi</button></span><h2 id="rvtitle"></h2><span class="r"><button class="link" data-act="rv-all">Tutte ok</button></span></div><div class="sh-body" id="rvbody"></div><div class="sh-foot" id="rvfoot"></div>','sheet-rv');
-  nextReview();
+  rv={ids:ids,i:0,drafts:{},done:{}};
+  openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"><button class="link" data-act="sheet-close">Chiudi</button></span><span class="rvnav"><button class="link" data-act="rv-prev" aria-label="Precedente">‹</button><h2 id="rvtitle"></h2><button class="link" data-act="rv-next" aria-label="Successiva">›</button></span><span class="r"><button class="link" data-act="rv-all">Tutte ok</button></span></div><div class="sh-body" id="rvbody"></div><div class="sh-foot" id="rvfoot"></div>','sheet-rv');
+  drawReview();
 }
-function curRv(){return rv?S.expenses.find(e=>e.id===rv.ids[rv.i]):null;}
-function nextReview(){
-  rv.i++;
-  while(rv.i<rv.ids.length&&!S.expenses.some(e=>e.id===rv.ids[rv.i]&&e.auto))rv.i++;
-  const e=curRv();
-  if(!e){closeSheet();toast('Fatto: spese controllate.');return;}
-  rv.ctx=e.ctx;rv.cat=e.cat;rv.desc=e.desc||'';drawReview();
+function rvMove(step){const n=rvLive().length;if(!n)return;rv.i=((rv.i+step)%n+n)%n;drawReview();}
+function rvNextTodo(){
+  const ids=rvLive();
+  for(let k=1;k<=ids.length;k++){const j=(rv.i+k)%ids.length;if(!rv.done[ids[j]]){rv.i=j;drawReview();return;}}
+  closeSheet();toast('Fatto: spese controllate.');
 }
 function drawReview(){
-  const e=curRv();if(!e)return;
-  const k=catOf(rv.cat);
-  $('#rvtitle').textContent='Rivedi · '+(rv.i+1)+' di '+rv.ids.length;
-  $('#rvbody').innerHTML='<div class="rvcard"><span class="badge" style="--c:'+k.color+'">'+k.emoji+'</span><div class="rt"><b>'+esc(e.shop||e.desc||'Spesa')+'</b><i>'+esc(dayLabel(e.date))+'</i></div><span class="ra">'+money(e.amt)+'</span></div>'+
-    '<label class="lab" for="rvdesc">Cosa hai comprato? <em>facoltativo</em></label><input id="rvdesc" class="field" type="text" maxlength="60" enterkeyhint="done" autocomplete="off" autocapitalize="sentences" placeholder="Es. patatine, tovaglie" value="'+esc(rv.desc)+'">'+
-    '<label class="lab">Contesto</label><div class="ctxrow" style="margin-bottom:0">'+S.contexts.map(x=>'<button class="pill'+(x.id===rv.ctx?' on':'')+'" data-act="rv-ctx" data-id="'+x.id+'">'+esc(x.emoji)+' '+esc(x.name)+'</button>').join('')+'</div>'+
-    '<label class="lab">Categoria</label><div class="cats">'+CATS.map(c=>'<button class="catb'+(c.id===rv.cat?' on':'')+'" data-act="rv-cat" data-id="'+c.id+'" style="--c:'+c.color+'"><span class="e">'+c.emoji+'</span>'+c.name+'</button>').join('')+'</div>';
-  $('#rvfoot').innerHTML='<button class="btn primary big" data-act="rv-ok">Conferma</button><div class="btnrow"><button class="btn" data-act="rv-skip">Salta</button><button class="btn danger" data-act="rv-del">Elimina</button></div>';
+  const ids=rv.ids=rvLive();
+  if(!ids.length){closeSheet();toast('Fatto: spese controllate.');return;}
+  if(rv.i>=ids.length)rv.i=ids.length-1;
+  const e=S.expenses.find(x=>x.id===ids[rv.i]),d=rvDraft(e),k=catOf(d.cat),ok=!!rv.done[e.id];
+  $('#rvtitle').textContent=(rv.i+1)+' di '+ids.length;
+  const strip=ids.map((id,j)=>{const x=S.expenses.find(y=>y.id===id);return '<button class="rvchip'+(j===rv.i?' on':'')+(rv.done[id]?' ok':'')+'" data-act="rv-go" data-id="'+j+'">'+(rv.done[id]?'✓ ':'')+esc((x.shop||x.desc||'Spesa').slice(0,16))+' · '+money(x.amt)+'</button>';}).join('');
+  $('#rvbody').innerHTML='<div class="chips" id="rvstrip" style="margin-bottom:8px">'+strip+'</div>'+
+    '<div class="rvcard"><span class="badge" style="--c:'+k.color+'">'+k.emoji+'</span><div class="rt"><b>'+esc(e.shop||e.desc||'Spesa')+'</b><i>'+esc(dayLabel(e.date))+(ok?' · ✓ confermata':'')+'</i></div><span class="ra">'+money(e.amt)+'</span></div>'+
+    '<label class="lab" for="rvdesc">Cosa hai comprato? <em>facoltativo</em></label><input id="rvdesc" class="field" type="text" maxlength="60" enterkeyhint="done" autocomplete="off" autocapitalize="sentences" placeholder="Es. patatine, tovaglie" value="'+esc(d.desc)+'">'+
+    '<label class="lab">Contesto</label><div class="ctxrow" style="margin-bottom:0">'+S.contexts.map(x=>'<button class="pill'+(x.id===d.ctx?' on':'')+'" data-act="rv-ctx" data-id="'+x.id+'">'+esc(x.emoji)+' '+esc(x.name)+'</button>').join('')+'</div>'+
+    '<label class="lab">Categoria</label><div class="cats">'+CATS.map(c=>'<button class="catb'+(c.id===d.cat?' on':'')+'" data-act="rv-cat" data-id="'+c.id+'" style="--c:'+c.color+'"><span class="e">'+c.emoji+'</span>'+c.name+'</button>').join('')+'</div>';
+  $('#rvfoot').innerHTML='<button class="btn primary big" data-act="rv-ok">'+(ok?'Aggiorna':'Conferma')+'</button><div class="btnrow"><button class="btn" data-act="rv-next">Avanti ›</button><button class="btn danger" data-act="rv-del">Elimina</button></div>';
+  const st=$('#rvstrip'),on=st&&st.querySelector('.on');if(on)st.scrollLeft=on.offsetLeft-(st.clientWidth-on.offsetWidth)/2;
 }
 let pendingQuick=null;
 function qiMsg(h){const r=$('#qires');if(r)r.innerHTML=h;}
@@ -1527,12 +1567,14 @@ const A={
   hideinst:()=>mutate(s=>{s.settings.installDismissed=true;},{count:false}),
   hidebk:()=>{ui.hideBackup=true;render();},
   'rv-open':()=>openReview(),
-  'rv-ctx':(el,id)=>{if(rv){rv.ctx=id;drawReview();}},
-  'rv-cat':(el,id)=>{if(rv){rv.cat=id;drawReview();}},
-  'rv-ok':()=>{if(!rv)return;const id=rv.ids[rv.i],cid=rv.ctx,cat=rv.cat,d=(rv.desc||'').trim().slice(0,60);mutate(s=>{const e=s.expenses.find(x=>x.id===id);if(e){if(!e.shop)e.shop=e.desc||'';e.ctx=cid;e.cat=cat;e.desc=d||e.desc;e.auto=false;}});nextReview();},
-  'rv-skip':()=>{if(rv)nextReview();},
-  'rv-del':()=>{if(!rv)return;const id=rv.ids[rv.i],snap=JSON.stringify(S);mutate(s=>{s.expenses=s.expenses.filter(x=>x.id!==id);});nextReview();toast('Spesa eliminata',()=>restoreSnapshot(snap));},
-  'rv-all':()=>{const n=S.expenses.filter(e=>e.auto).length;mutate(s=>{s.expenses.forEach(e=>{if(e.auto)e.auto=false;});});closeSheet();toast(n+(n===1?' spesa confermata.':' spese confermate.'));},
+  'rv-prev':()=>{if(rv)rvMove(-1);},
+  'rv-next':()=>{if(rv)rvMove(1);},
+  'rv-go':(el,id)=>{if(rv){rv.i=Number(id);drawReview();}},
+  'rv-ctx':(el,id)=>{const e=rvCur();if(e){rvDraft(e).ctx=id;drawReview();}},
+  'rv-cat':(el,id)=>{const e=rvCur();if(e){rvDraft(e).cat=id;drawReview();}},
+  'rv-ok':()=>{const e=rvCur();if(!e)return;const d=rvDraft(e),id=e.id;mutate(s=>{const x=s.expenses.find(y=>y.id===id);if(x){if(!x.shop)x.shop=x.desc||'';x.ctx=d.ctx;x.cat=d.cat;x.desc=(d.desc||'').trim().slice(0,60)||x.desc;x.auto=false;}});rv.done[id]=true;rvNextTodo();},
+  'rv-del':()=>{const e=rvCur();if(!e)return;const id=e.id,snap=JSON.stringify(S);mutate(s=>{s.expenses=s.expenses.filter(x=>x.id!==id);});drawReview();toast('Spesa eliminata',()=>{restoreSnapshot(snap);});},
+  'rv-all':()=>{if(!rv)return;const pend=rvLive().filter(id=>!rv.done[id]);mutate(s=>{pend.forEach(id=>{const x=s.expenses.find(y=>y.id===id);if(!x)return;const d=rv.drafts[id];if(d){if(!x.shop)x.shop=x.desc||'';x.ctx=d.ctx;x.cat=d.cat;x.desc=(d.desc||'').trim().slice(0,60)||x.desc;}x.auto=false;});});closeSheet();toast(pend.length+(pend.length===1?' spesa confermata.':' spese confermate.'));},
   'ex-pay':(el,id)=>{if(ex){ex.pay=id;updPay();compactKp();}},
   'kp-show':()=>{const sh=sheetState&&sheetState.sh;if(sh)sh.classList.remove('compact');if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();},
   'kp-toggle':()=>{const sh=sheetState&&sheetState.sh;if(sh)sh.classList.add('compact');},
@@ -1562,7 +1604,7 @@ document.addEventListener('input',e=>{
   const t=e.target;
   if(t.id==='q'){ui.q=t.value;const c=ctxById(S.activeCtx),l=$('#list');if(c&&l)l.innerHTML=listHTML(c);}
   else if(t.id==='descinp'&&ex)ex.desc=t.value;
-  else if(t.id==='rvdesc'&&rv)rv.desc=t.value;
+  else if(t.id==='rvdesc'&&rv){const e=rvCur();if(e)rvDraft(e).desc=t.value;}
 });
 document.addEventListener('change',async e=>{
   const t=e.target;
