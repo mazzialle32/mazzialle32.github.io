@@ -1440,7 +1440,7 @@ function openReview(){
   const ids=S.expenses.filter(e=>e.auto).sort(cmpExp).map(e=>e.id);
   if(!ids.length){toast('Non c’è niente da rivedere.');return;}
   rv={ids:ids,i:0,drafts:{},done:{}};
-  openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"><button class="link" data-act="sheet-close">Chiudi</button></span><span class="rvnav"><button class="link" data-act="rv-prev" aria-label="Precedente">‹</button><h2 id="rvtitle"></h2><button class="link" data-act="rv-next" aria-label="Successiva">›</button></span><span class="r"><button class="link" data-act="rv-all">Tutte ok</button></span></div><div class="sh-body" id="rvbody"></div><div class="sh-foot" id="rvfoot"></div>','sheet-rv');
+  openSheet('<div class="grab"><i></i></div><div class="sh-head"><span class="l"><button class="link" data-act="sheet-close">Chiudi</button></span><span class="rvnav"><button class="link" data-act="rv-prev" aria-label="Precedente">‹</button><h2 id="rvtitle"></h2><button class="link" data-act="rv-next" aria-label="Successiva">›</button></span><span class="r"></span></div><div class="sh-body" id="rvbody"></div><div class="sh-foot" id="rvfoot"></div>','sheet-rv');
   drawReview();
 }
 function rvMove(step){const n=rvLive().length;if(!n)return;rv.i=((rv.i+step)%n+n)%n;drawReview();}
@@ -1641,7 +1641,6 @@ const A={
   'rv-cat':(el,id)=>{const e=rvCur();if(e){rvDraft(e).cat=id;drawReview();}},
   'rv-ok':()=>{const e=rvCur();if(!e)return;const d=rvDraft(e),id=e.id;mutate(s=>{const x=s.expenses.find(y=>y.id===id);if(x){if(!x.shop)x.shop=x.desc||'';x.ctx=d.ctx;x.cat=d.cat;x.desc=(d.desc||'').trim().slice(0,60)||x.desc;x.auto=false;}});rv.done[id]=true;rvNextTodo();},
   'rv-del':()=>{const e=rvCur();if(!e)return;const id=e.id,snap=JSON.stringify(S);mutate(s=>{s.expenses=s.expenses.filter(x=>x.id!==id);});drawReview();toast('Spesa eliminata',()=>{restoreSnapshot(snap);});},
-  'rv-all':()=>{if(!rv)return;const pend=rvLive().filter(id=>!rv.done[id]);mutate(s=>{pend.forEach(id=>{const x=s.expenses.find(y=>y.id===id);if(!x)return;const d=rv.drafts[id];if(d){if(!x.shop)x.shop=x.desc||'';x.ctx=d.ctx;x.cat=d.cat;x.desc=(d.desc||'').trim().slice(0,60)||x.desc;}x.auto=false;});});closeSheet();toast(pend.length+(pend.length===1?' spesa confermata.':' spese confermate.'));},
   'ex-pay':(el,id)=>{
     if(!ex)return;
     if(id==='cash'){ex.pay='cash';ex.src='';}
