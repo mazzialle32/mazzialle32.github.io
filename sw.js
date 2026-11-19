@@ -1,6 +1,6 @@
 /* Tasca: service worker. Con rete prende sempre la versione più recente (aspetta al massimo 3 secondi);
    senza rete, o con segnale debole, usa la copia salvata. Se aggiorni i file, cambia la versione qui sotto. */
-const CACHE = 'tasca-v10';
+const CACHE = 'tasca-v11';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

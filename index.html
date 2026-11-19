@@ -968,7 +968,7 @@ function viewSettings(){
     '<div class="srow"><span>Contenuto</span><span>'+S.contexts.length+' contesti · '+S.expenses.length+' spese</span></div>'+
     (hasPrev()?'<div class="srow"><button data-act="restore-prev">Ripristina i dati precedenti all’ultima importazione</button></div>':'')+
     '<div class="srow"><button class="dng" data-act="wipe">Elimina tutti i dati</button></div></section>';
-  return h+'<p class="ver">Tasca 2.0 · funziona offline</p>';
+  return h+'<p class="ver">Tasca 2.1 · funziona offline</p>';
 }
 
 const VIEWS={spese:viewSpese,ctx:viewContesti,glob:viewGlobale,set:viewSettings};
@@ -1389,7 +1389,10 @@ function parseQuick(text,opt){
     if(!ctx){res.unmatched++;ctx=active;}
     if(!ctx){res.bad++;return;}
     const ts=m[2]?new Date(+m[1].slice(0,4),+m[1].slice(5,7)-1,+m[1].slice(8,10),+m[2],+m[3]).getTime():Date.now();
-    const rec={id:uid(),ctx:ctx.id,amt:amt,desc:(f[2]||'').slice(0,60),cat:cat?cat.id:'varie',pay:/contant|cash/i.test(f[5]||'')?'cash':'card',auto:true,shop:(f[2]||'').slice(0,60),ext:(f[6]||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,40),date:m[1],ts:ts};
+    const pay=/contant|cash/i.test(f[5]||'')?'cash':'card';
+    let src='';
+    if(pay==='card'&&f[7]){const bn=nrm(f[7]),ba=(S.settings.accounts||[]).find(x=>nrm(x)===bn);src=ba||f[7].slice(0,20);}
+    const rec={id:uid(),ctx:ctx.id,amt:amt,desc:(f[2]||'').slice(0,60),cat:cat?cat.id:'varie',pay:pay,src:src,auto:true,shop:(f[2]||'').slice(0,60),ext:(f[6]||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,40),date:m[1],ts:ts};
     if(rec.cat==='varie'&&opt&&opt.learn){const l=opt.learn(rec.desc);if(l)rec.cat=l;}
     res.ok.push({key:line,rec:rec});
   });
